@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { DEST, SOURCE, type ChainInfo } from '../config/cctp'
+import { getChain, type ChainInfo } from '../config/cctp'
 import type { Order, OrderPhase } from '../hooks/useBridge'
 import { elapsed, formatTime, formatUsdc, shortAddr, shortHash } from '../lib/format'
 
@@ -35,50 +35,54 @@ function txLink(chain: ChainInfo, hash?: string) {
   )
 }
 
-const STEPS: StepDef[] = [
-  {
-    key: 'approve',
-    activePhases: ['approving'],
-    doneRank: 2,
-    title: `① 授权 USDC（${SOURCE.name}）`,
-    render: (o) =>
-      o.approveSkipped ? (
-        <span className="muted">额度充足，已跳过</span>
-      ) : (
-        txLink(SOURCE, o.approveTxHash) ?? <span className="muted">等待钱包确认授权…</span>
-      ),
-  },
-  {
-    key: 'burn',
-    activePhases: ['burning'],
-    doneRank: 3,
-    title: `② 销毁 USDC（${SOURCE.name}）`,
-    render: (o) => txLink(SOURCE, o.burnTxHash) ?? <span className="muted">等待销毁交易…</span>,
-  },
-  {
-    key: 'attest',
-    activePhases: ['attesting'],
-    doneRank: 4,
-    title: '③ 等待 Circle 证明 (attestation)',
-    render: (o) => {
-      if (o.attestation) return <span className="ok">证明已就绪 ✓</span>
-      const label =
-        o.attestationStatus === 'pending_confirmations' ? '等待区块确认中…' : '已提交，排队生成证明…'
-      return <span className="muted">{label}</span>
+function buildSteps(source: ChainInfo, dest: ChainInfo): StepDef[] {
+  return [
+    {
+      key: 'approve',
+      activePhases: ['approving'],
+      doneRank: 2,
+      title: `① 授权 USDC（${source.name}）`,
+      render: (o) =>
+        o.approveSkipped ? (
+          <span className="muted">额度充足，已跳过</span>
+        ) : (
+          txLink(source, o.approveTxHash) ?? <span className="muted">等待钱包确认授权…</span>
+        ),
     },
-  },
-  {
-    key: 'mint',
-    activePhases: ['switching', 'minting'],
-    doneRank: 5,
-    title: `④ 铸造 USDC（${DEST.name}）`,
-    render: (o) => {
-      if (o.phase === 'switching' && !o.error)
-        return <span className="muted">请在钱包中切换到 {DEST.name}…</span>
-      return txLink(DEST, o.mintTxHash) ?? <span className="muted">等待铸造交易…</span>
+    {
+      key: 'burn',
+      activePhases: ['burning'],
+      doneRank: 3,
+      title: `② 销毁 USDC（${source.name}）`,
+      render: (o) => txLink(source, o.burnTxHash) ?? <span className="muted">等待销毁交易…</span>,
     },
-  },
-]
+    {
+      key: 'attest',
+      activePhases: ['attesting'],
+      doneRank: 4,
+      title: '③ 等待 Circle 证明 (attestation)',
+      render: (o) => {
+        if (o.attestation) return <span className="ok">证明已就绪 ✓</span>
+        const label =
+          o.attestationStatus === 'pending_confirmations'
+            ? '等待区块确认中…'
+            : '已提交，排队生成证明…'
+        return <span className="muted">{label}</span>
+      },
+    },
+    {
+      key: 'mint',
+      activePhases: ['switching', 'minting'],
+      doneRank: 5,
+      title: `④ 铸造 USDC（${dest.name}）`,
+      render: (o) => {
+        if (o.phase === 'switching' && !o.error)
+          return <span className="muted">请在钱包中切换到 {dest.name}…</span>
+        return txLink(dest, o.mintTxHash) ?? <span className="muted">等待铸造交易…</span>
+      },
+    },
+  ]
+}
 
 function isErrorState(o: Order): boolean {
   return !!o.error && o.phase !== 'completed'
@@ -119,6 +123,9 @@ export function OrderProgress({
 
   const done = order.phase === 'completed'
   const error = isErrorState(order)
+  const source = getChain(order.sourceKey)
+  const dest = getChain(order.destKey)
+  const steps = buildSteps(source, dest)
 
   return (
     <section className="card order">
@@ -137,7 +144,7 @@ export function OrderProgress({
       <div className="order-grid">
         <Info label="金额">{formatUsdc(BigInt(order.amountRaw))} USDC</Info>
         <Info label="路由">
-          {SOURCE.name} → {DEST.name}
+          {source.name} → {dest.name}
         </Info>
         <Info label="模式">{order.mode === 'fast' ? '快速 (Fast)' : '标准 (Standard)'}</Info>
         <Info label="最大手续费">
@@ -154,7 +161,7 @@ export function OrderProgress({
       </div>
 
       <ol className="steps">
-        {STEPS.map((s) => {
+        {steps.map((s) => {
           const st = stepState(order, s)
           return (
             <li key={s.key} className={`step step-${st}`}>
@@ -176,7 +183,7 @@ export function OrderProgress({
       )}
 
       {done && (
-        <div className="success-box">🎉 跨链完成！USDC 已在 {DEST.name} 上铸造给接收地址。</div>
+        <div className="success-box">🎉 跨链完成！USDC 已在 {dest.name} 上铸造给接收地址。</div>
       )}
 
       <div className="order-actions">

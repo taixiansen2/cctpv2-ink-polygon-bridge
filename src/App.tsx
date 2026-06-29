@@ -1,8 +1,17 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAppKit } from '@reown/appkit/react'
 import { useAccount, useReadContract } from 'wagmi'
 import { erc20Abi, isAddress, parseUnits } from 'viem'
-import { DEST, SOURCE, FINALITY_THRESHOLD, USDC_DECIMALS, type TransferMode } from './config/cctp'
+import {
+  CHAIN_LIST,
+  DEFAULT_DEST_KEY,
+  DEFAULT_SOURCE_KEY,
+  FINALITY_THRESHOLD,
+  USDC_DECIMALS,
+  getChain,
+  type ChainInfo,
+  type TransferMode,
+} from './config/cctp'
 import { projectId } from './config/appkit'
 import { getTransferFees, type FeeOption } from './lib/circle'
 import { formatUsdc, shortAddr } from './lib/format'
@@ -22,8 +31,10 @@ const MODE_INFO: Record<TransferMode, { label: string; time: string; desc: strin
   },
 }
 
+// minimumFee 可能为小数 bps（如 1.3），放大 1000 倍做整数运算后向上取整
 function ceilDivBps(amount: bigint, bps: number): bigint {
-  return (amount * BigInt(bps) + 9999n) / 10000n
+  const scaled = BigInt(Math.round(bps * 1000))
+  return (amount * scaled + 9_999_999n) / 10_000_000n
 }
 
 export default function App() {
@@ -31,35 +42,41 @@ export default function App() {
   const { address, isConnected, chainId } = useAccount()
   const { order, busy, start, resume, reset } = useBridge()
 
+  const [sourceKey, setSourceKey] = useState(DEFAULT_SOURCE_KEY)
+  const [destKey, setDestKey] = useState(DEFAULT_DEST_KEY)
   const [amount, setAmount] = useState('')
   const [mode, setMode] = useState<TransferMode>('fast')
   const [recipient, setRecipient] = useState('')
   const [fees, setFees] = useState<FeeOption[] | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
 
+  const source = getChain(sourceKey)
+  const dest = getChain(destKey)
+
   // 连接后默认接收地址 = 当前地址（同一钱包）
   useEffect(() => {
     if (address && !recipient) setRecipient(address)
   }, [address, recipient])
 
-  // 拉取 Ink→Polygon 的费率（用于展示预估手续费）
+  // 拉取当前路由的费率（路由变化时刷新）
   useEffect(() => {
     let alive = true
-    getTransferFees(SOURCE.domain, DEST.domain)
+    setFees(null)
+    getTransferFees(source.domain, dest.domain)
       .then((f) => alive && setFees(f))
-      .catch(() => {})
+      .catch(() => alive && setFees(null))
     return () => {
       alive = false
     }
-  }, [])
+  }, [source.domain, dest.domain])
 
   // 源链 USDC 余额
   const { data: balance } = useReadContract({
-    address: SOURCE.usdc,
+    address: source.usdc,
     abi: erc20Abi,
     functionName: 'balanceOf',
     args: address ? [address] : undefined,
-    chainId: SOURCE.chainId,
+    chainId: source.chainId,
     query: { enabled: !!address, refetchInterval: 15_000 },
   })
 
@@ -79,8 +96,22 @@ export default function App() {
 
   const hasActiveOrder = !!order && order.phase !== 'completed'
 
+  function selectSource(k: string) {
+    if (k === destKey) setDestKey(sourceKey) // 与目标重合则交换
+    setSourceKey(k)
+  }
+  function selectDest(k: string) {
+    if (k === sourceKey) setSourceKey(destKey)
+    setDestKey(k)
+  }
+  function swap() {
+    setSourceKey(destKey)
+    setDestKey(sourceKey)
+  }
+
   function validate(): string | null {
     if (!isConnected) return '请先连接钱包'
+    if (sourceKey === destKey) return '源链与目标链不能相同'
     if (!amount || Number(amount) <= 0) return '请输入有效金额'
     let amountRaw: bigint
     try {
@@ -97,26 +128,30 @@ export default function App() {
     const err = validate()
     setFormError(err)
     if (err) return
-    await start({ amount, mode, recipient: recipient as `0x${string}` })
+    await start({ sourceKey, destKey, amount, mode, recipient: recipient as `0x${string}` })
   }
 
   function setMax() {
     if (balance !== undefined) setAmount(formatUsdc(balance as bigint))
   }
 
-  const networkName =
-    chainId === SOURCE.chainId ? SOURCE.name : chainId === DEST.chainId ? DEST.name : chainId ? '其他网络' : ''
+  const connectedChain = CHAIN_LIST.find((c) => c.chainId === chainId)
+  const networkName = connectedChain?.name ?? (chainId ? `链 #${chainId}` : '')
 
   return (
     <div className="app">
+      <div className="aurora" aria-hidden="true">
+        <span className="orb orb-1" />
+        <span className="orb orb-2" />
+        <span className="orb orb-3" />
+      </div>
+
       <header className="topbar">
         <div className="brand">
           <span className="logo">⇄</span>
           <div>
             <div className="brand-title">CCTP v2 跨链桥</div>
-            <div className="brand-sub">
-              {SOURCE.name} → {DEST.name} · 原生 USDC
-            </div>
+            <div className="brand-sub">{CHAIN_LIST.length} 条 EVM 链 · 原生 USDC</div>
           </div>
         </div>
         <div className="wallet">
@@ -146,9 +181,11 @@ export default function App() {
       <main className="container">
         <section className="card form">
           <div className="route">
-            <ChainPill name={SOURCE.name} role="源链 From" />
-            <span className="route-arrow">→</span>
-            <ChainPill name={DEST.name} role="目标链 To" />
+            <ChainSelect role="源链 From" value={source} exclude={destKey} onChange={selectSource} />
+            <button className="swap-btn" type="button" onClick={swap} title="交换源链 / 目标链">
+              ⇅
+            </button>
+            <ChainSelect role="目标链 To" value={dest} exclude={sourceKey} onChange={selectDest} />
           </div>
 
           <label className="field">
@@ -196,7 +233,7 @@ export default function App() {
 
           <label className="field">
             <div className="field-head">
-              <span>接收地址（{DEST.name}）</span>
+              <span>接收地址（{dest.name}）</span>
             </div>
             <input
               className="text-input"
@@ -242,14 +279,12 @@ export default function App() {
           )}
         </section>
 
-        {order && (
-          <OrderProgress order={order} busy={busy} onResume={resume} onReset={reset} />
-        )}
+        {order && <OrderProgress order={order} busy={busy} onResume={resume} onReset={reset} />}
 
         <footer className="foot">
           <p>
-            基于 Circle CCTP v2 原生 USDC 跨链：在 {SOURCE.name}（域 {SOURCE.domain}）销毁 →
-            Circle 出具证明 → 在 {DEST.name}（域 {DEST.domain}）铸造。
+            基于 Circle CCTP v2 原生 USDC 跨链：在 {source.name}（域 {source.domain}）销毁 → Circle
+            出具证明 → 在 {dest.name}（域 {dest.domain}）铸造。
           </p>
           <p className="muted">
             ⚠️ 这是主网真实资金操作，请先用小额测试。流程不依赖后端，证明由 Circle Iris API 提供。
@@ -260,11 +295,71 @@ export default function App() {
   )
 }
 
-function ChainPill({ name, role }: { name: string; role: string }) {
+function ChainBadge({ chain }: { chain: ChainInfo }) {
   return (
-    <div className="chain-pill">
-      <div className="chain-role">{role}</div>
-      <div className="chain-name">{name}</div>
+    <span className="chain-coin" style={{ background: chain.color }}>
+      {chain.name.charAt(0)}
+    </span>
+  )
+}
+
+function ChainSelect({
+  role,
+  value,
+  exclude,
+  onChange,
+}: {
+  role: string
+  value: ChainInfo
+  exclude?: string
+  onChange: (key: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onDoc)
+    return () => document.removeEventListener('mousedown', onDoc)
+  }, [open])
+
+  return (
+    <div className="chain-select" ref={ref}>
+      <button
+        type="button"
+        className={`chain-pill chain-pill-btn ${open ? 'is-open' : ''}`}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <ChainBadge chain={value} />
+        <div className="chain-meta">
+          <div className="chain-role">{role}</div>
+          <div className="chain-name">{value.name}</div>
+        </div>
+        <span className="chev">▾</span>
+      </button>
+      {open && (
+        <div className="chain-menu">
+          {CHAIN_LIST.map((c) => (
+            <button
+              key={c.key}
+              type="button"
+              className={`chain-option ${c.key === value.key ? 'is-active' : ''}`}
+              disabled={c.key === exclude}
+              onClick={() => {
+                onChange(c.key)
+                setOpen(false)
+              }}
+            >
+              <ChainBadge chain={c} />
+              <span className="chain-option-name">{c.name}</span>
+              {c.key === value.key && <span className="chain-check">✓</span>}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

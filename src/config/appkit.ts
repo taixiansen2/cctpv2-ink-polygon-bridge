@@ -1,6 +1,6 @@
 import { createAppKit } from '@reown/appkit/react'
 import { WagmiAdapter } from '@reown/appkit-adapter-wagmi'
-import { ink, polygon, type AppKitNetwork } from '@reown/appkit/networks'
+import { APPKIT_NETWORKS } from './cctp'
 
 /**
  * Reown AppKit（WalletConnect v2）+ wagmi 配置。
@@ -17,8 +17,8 @@ if (!projectId) {
   )
 }
 
-// 仅需 Ink（源）与 Polygon（目标）两条链
-export const networks: [AppKitNetwork, ...AppKitNetwork[]] = [ink, polygon]
+// 所有 CCTP v2 支持的 EVM 链
+export const networks = APPKIT_NETWORKS
 
 export const wagmiAdapter = new WagmiAdapter({
   projectId,

@@ -9,13 +9,12 @@ import {
 import { erc20Abi, pad, parseUnits } from 'viem'
 import { wagmiConfig } from '../config/appkit'
 import {
-  DEST,
   FINALITY_THRESHOLD,
   MESSAGE_TRANSMITTER_V2,
-  SOURCE,
   TOKEN_MESSENGER_V2,
   USDC_DECIMALS,
   ZERO_BYTES32,
+  getChain,
   messageTransmitterV2Abi,
   tokenMessengerV2Abi,
   type TransferMode,
@@ -34,6 +33,8 @@ export type OrderPhase =
 
 export interface Order {
   id: string // 用销毁交易哈希；销毁前用临时 id
+  sourceKey: string // 源链 key（见 config/cctp 的 CHAINS）
+  destKey: string // 目标链 key
   amountRaw: string // bigint 序列化为字符串以便存 localStorage
   mode: TransferMode
   recipient: `0x${string}`
@@ -73,13 +74,18 @@ function save(order: Order | null) {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
-/** maxFee = ceil(amount * minimumFeeBps / 10000) */
+/**
+ * maxFee = ceil(amount * minimumFeeBps / 10000)
+ * minimumFee 可能是小数（如某些路由为 1.3 bps），放大 1000 倍后用整数运算，最终向上取整。
+ */
 function computeMaxFee(amount: bigint, bps: number): bigint {
-  const fee = (amount * BigInt(bps) + 9999n) / 10000n
-  return fee
+  const scaled = BigInt(Math.round(bps * 1000))
+  return (amount * scaled + 9_999_999n) / 10_000_000n
 }
 
 export interface StartParams {
+  sourceKey: string
+  destKey: string
   amount: string
   mode: TransferMode
   recipient: `0x${string}`
@@ -115,20 +121,22 @@ export function useBridge() {
       update({ error: undefined })
 
       try {
+        const source = getChain(o.sourceKey)
+        const dest = getChain(o.destKey)
         const amount = BigInt(o.amountRaw)
         const account = getAccount(wagmiConfig).address
         if (!account) throw new Error('请先连接钱包')
 
-        // ───────────────── 阶段 1：在 Ink 上销毁（含授权）─────────────────
+        // ───────────────── 阶段 1：在源链上销毁（含授权）─────────────────
         if (!o.burnTxHash) {
           update({ phase: 'approving' })
           // 确保在源链
-          await switchChain(wagmiConfig, { chainId: SOURCE.chainId })
+          await switchChain(wagmiConfig, { chainId: source.chainId })
 
           // 计算 maxFee
           let maxFee = o.maxFeeRaw ? BigInt(o.maxFeeRaw) : 0n
           if (!o.maxFeeRaw) {
-            const fees = await getTransferFees(SOURCE.domain, DEST.domain)
+            const fees = await getTransferFees(source.domain, dest.domain)
             const wanted = FINALITY_THRESHOLD[o.mode]
             const opt =
               fees.find((f) => f.finalityThreshold === wanted) ??
@@ -140,25 +148,25 @@ export function useBridge() {
 
           // 授权检查
           const allowance = (await readContract(wagmiConfig, {
-            address: SOURCE.usdc,
+            address: source.usdc,
             abi: erc20Abi,
             functionName: 'allowance',
             args: [account, TOKEN_MESSENGER_V2],
-            chainId: SOURCE.chainId,
+            chainId: source.chainId,
           })) as bigint
 
           if (allowance < amount) {
             const approveTx = await writeContract(wagmiConfig, {
-              address: SOURCE.usdc,
+              address: source.usdc,
               abi: erc20Abi,
               functionName: 'approve',
               args: [TOKEN_MESSENGER_V2, amount],
-              chainId: SOURCE.chainId,
+              chainId: source.chainId,
             })
             update({ approveTxHash: approveTx })
             await waitForTransactionReceipt(wagmiConfig, {
               hash: approveTx,
-              chainId: SOURCE.chainId,
+              chainId: source.chainId,
             })
           } else {
             update({ approveSkipped: true })
@@ -173,17 +181,17 @@ export function useBridge() {
             functionName: 'depositForBurn',
             args: [
               amount,
-              DEST.domain,
+              dest.domain,
               mintRecipient,
-              SOURCE.usdc,
+              source.usdc,
               ZERO_BYTES32,
               maxFee,
               FINALITY_THRESHOLD[o.mode],
             ],
-            chainId: SOURCE.chainId,
+            chainId: source.chainId,
           })
           update({ burnTxHash: burnTx, id: burnTx })
-          await waitForTransactionReceipt(wagmiConfig, { hash: burnTx, chainId: SOURCE.chainId })
+          await waitForTransactionReceipt(wagmiConfig, { hash: burnTx, chainId: source.chainId })
         }
 
         // ───────────────── 阶段 2：轮询 Circle 证明 ─────────────────
@@ -192,7 +200,7 @@ export function useBridge() {
           // 一直轮询直到拿到证明（fast 通常数十秒，standard 约 13–19 分钟）
           // eslint-disable-next-line no-constant-condition
           while (true) {
-            const messages = await fetchMessages(SOURCE.domain, o.burnTxHash!)
+            const messages = await fetchMessages(source.domain, o.burnTxHash!)
             const msg = messages?.[0]
             update({ attestationStatus: msg?.status ?? 'pending_confirmations' })
             if (isAttested(msg)) {
@@ -203,10 +211,10 @@ export function useBridge() {
           }
         }
 
-        // ───────────────── 阶段 3：在 Polygon 上铸造 ─────────────────
+        // ───────────────── 阶段 3：在目标链上铸造 ─────────────────
         if (!o.mintTxHash) {
           update({ phase: 'switching' })
-          await switchChain(wagmiConfig, { chainId: DEST.chainId })
+          await switchChain(wagmiConfig, { chainId: dest.chainId })
 
           update({ phase: 'minting' })
           const mintTx = await writeContract(wagmiConfig, {
@@ -214,10 +222,10 @@ export function useBridge() {
             abi: messageTransmitterV2Abi,
             functionName: 'receiveMessage',
             args: [o.message!, o.attestation!],
-            chainId: DEST.chainId,
+            chainId: dest.chainId,
           })
           update({ mintTxHash: mintTx })
-          await waitForTransactionReceipt(wagmiConfig, { hash: mintTx, chainId: DEST.chainId })
+          await waitForTransactionReceipt(wagmiConfig, { hash: mintTx, chainId: dest.chainId })
         }
 
         update({ phase: 'completed', completedAt: Date.now() })
@@ -237,6 +245,8 @@ export function useBridge() {
       const amountRaw = parseUnits(params.amount, USDC_DECIMALS).toString()
       const fresh: Order = {
         id: `pending-${Date.now()}`,
+        sourceKey: params.sourceKey,
+        destKey: params.destKey,
         amountRaw,
         mode: params.mode,
         recipient: params.recipient,
