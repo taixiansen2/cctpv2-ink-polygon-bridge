@@ -107,11 +107,17 @@ export function OrderProgress({
   busy,
   onResume,
   onReset,
+  onReclaim,
+  reclaiming,
+  reclaimError,
 }: {
   order: Order
   busy: boolean
   onResume: () => void
   onReset: () => void
+  onReclaim: () => void
+  reclaiming: boolean
+  reclaimError: string | null
 }) {
   // 让“用时”每秒刷新
   const [, tick] = useState(0)
@@ -184,6 +190,24 @@ export function OrderProgress({
 
       {done && (
         <div className="success-box">🎉 跨链完成！USDC 已在 {dest.name} 上铸造给接收地址。</div>
+      )}
+
+      {source.kind === 'solana' && order.solanaEventAccount && order.attestation && (
+        <div className="reclaim-box">
+          {order.reclaimTxHash ? (
+            <span className="ok">已回收发送端租金 ✓ {txLink(source, order.reclaimTxHash)}</span>
+          ) : (
+            <>
+              <div className="reclaim-info">
+                可回收源链（Solana）MessageSent 事件账户租金（约 0.0026–0.004 SOL）
+              </div>
+              <button className="btn btn-ghost" onClick={onReclaim} disabled={reclaiming || busy}>
+                {reclaiming ? '回收中…' : '回收 Solana 租金'}
+              </button>
+              {reclaimError && <div className="reclaim-error">{reclaimError}</div>}
+            </>
+          )}
+        </div>
       )}
 
       <div className="order-actions">

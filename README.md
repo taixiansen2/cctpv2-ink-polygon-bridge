@@ -1,9 +1,9 @@
-# CCTP v2 跨链桥 · 全 EVM 链
+# CCTP v2 跨链桥 · 全 EVM 链 + Solana
 
-一个纯前端网页程序：用 **Circle CCTP v2**（支持 **标准 Standard / 快速 Fast** 两种模式）在 **所有 CCTP v2 支持的 EVM 链**之间互转原生 **USDC**，支持任意「源链 → 目标链」组合。
+一个纯前端网页程序：用 **Circle CCTP v2**（支持 **标准 Standard / 快速 Fast** 两种模式）在 **CCTP v2 支持的 EVM 链与 Solana**之间互转原生 **USDC**，支持任意「源链 → 目标链」组合（含 EVM↔Solana 跨生态）。
 
-- 🌐 **13 条 EVM 链**任意互转（下拉选择源/目标链 + 一键交换方向）
-- 📱 通过 **WalletConnect 扫码** 连接手机钱包（也支持浏览器插件钱包）
+- 🌐 **13 条 EVM 链 + Solana**任意互转（下拉选择源/目标链 + 一键交换方向）
+- 📱 通过 **WalletConnect 扫码** 连接手机钱包（EVM 与 Solana 均支持，也支持浏览器插件钱包）
 - 🧾 实时展示 **跨链订单信息** 与 **四步进度**（授权 → 销毁 → Circle 证明 → 铸造）
 - 🔁 刷新页面后订单状态自动恢复，可「继续 / 重试」
 - 🛜 无后端：证明由 Circle Iris API 提供，交易由用户钱包直接签名
@@ -22,12 +22,25 @@
 | Arbitrum | 42161 | 3 | Sonic | 146 | 13 |
 | Base | 8453 | 6 | World Chain | 480 | 14 |
 | Polygon PoS | 137 | 7 | Sei | 1329 | 16 |
-| Ink | 57073 | 21 | | | |
+| Ink | 57073 | 21 | **Solana** | mainnet-beta | **5** |
 
-两条链上的 CCTP v2 合约地址一致（EDGE 链除外）：
+EVM 各链上的 CCTP v2 合约地址一致（EDGE 链除外）：
 
 - TokenMessengerV2：`0x28b5a0e9C621a5BadaA536219b3a228C8168cf5d`
 - MessageTransmitterV2：`0x81D40F21F12A8F0E3252Bccb954D722d4c464B64`
+
+Solana（CCTP v2 程序，来自 [Circle 文档](https://developers.circle.com/cctp/solana-programs)）：
+
+- USDC mint：`EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`
+- MessageTransmitterV2：`CCTPV2Sm4AdWt5296sk4P66VBZ7bEhcARwFaaS9YPbeC`
+- TokenMessengerMinterV2：`CCTPV2vPZJS2u2BBsUoscuikbYjnpFmbFsvVuJdgUMQe`
+
+> **Solana 实现说明**：销毁 / 铸造指令严格对照 Circle 官方 v2 示例（`examples/v2/solana.ts`）实现，
+> 用 Anchor + 官方 IDL 构造。**EVM↔Solana 跨生态需同时连接 EVM 与 Solana 两个钱包**
+> （源链销毁用一端，目标链铸造用另一端）。目标为 Solana 时，收款方的 USDC 关联账户（ATA）
+> 会在 `receiveMessage` 时按需自动创建。
+>
+> ⚠️ Solana 链上交易未在本仓库环境实跑，**上主网前请先在 devnet 或用极小额验证**。
 
 > 想增删链：编辑 [`src/config/cctp.ts`](src/config/cctp.ts) 里的 `META` 表（链对象来自 `@reown/appkit/networks`，附上 Circle 的域 ID 与 USDC 地址即可）。
 
@@ -119,8 +132,10 @@ src/
 ├── config/
 │   ├── appkit.ts     # WalletConnect / wagmi 初始化（扫码连接）
 │   └── cctp.ts       # 链注册表（域/合约/USDC/ABI）—— 增删链改这里
+├── idl/              # Solana CCTP v2 程序 Anchor IDL（来自 Circle 官方）
 ├── lib/
 │   ├── circle.ts     # Iris API：费率 + 证明轮询
+│   ├── solana.ts     # Solana 侧 depositForBurn / receiveMessage（Anchor）
 │   └── format.ts     # 金额/地址/时间格式化
 ├── hooks/
 │   └── useBridge.ts  # 跨链状态机（授权→销毁→证明→铸造，含持久化与恢复）

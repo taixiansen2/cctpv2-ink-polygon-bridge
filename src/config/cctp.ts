@@ -10,6 +10,7 @@ import {
   optimism,
   polygon,
   sei,
+  solana,
   sonic,
   unichain,
   worldchain,
@@ -40,23 +41,38 @@ export type TransferMode = keyof typeof FINALITY_THRESHOLD
 /** USDC 精度（所有支持链均为 6） */
 export const USDC_DECIMALS = 6
 
+/** CCTP v2 在 Solana 上的程序与代币（来自 Circle 官方文档） */
+export const SOLANA_CCTP = {
+  domain: 5,
+  usdcMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+  messageTransmitter: 'CCTPV2Sm4AdWt5296sk4P66VBZ7bEhcARwFaaS9YPbeC',
+  tokenMessengerMinter: 'CCTPV2vPZJS2u2BBsUoscuikbYjnpFmbFsvVuJdgUMQe',
+} as const
+
+export type ChainKind = 'evm' | 'solana'
+
 export interface ChainInfo {
   key: string
   name: string
-  chainId: number
+  kind: ChainKind
   /** CCTP 域 ID */
   domain: number
-  usdc: `0x${string}`
+  /** EVM 为 0x 合约地址；Solana 为 base58 mint 地址 */
+  usdc: string
   /** 徽标主色 */
   color: string
   network: AppKitNetwork
   txUrl: (hash: string) => string
+  /** 仅 EVM：链 ID */
+  chainId?: number
 }
 
 interface ChainMeta {
   name: string
+  /** 默认 'evm' */
+  kind?: ChainKind
   domain: number
-  usdc: `0x${string}`
+  usdc: string
   color: string
   network: AppKitNetwork
 }
@@ -154,6 +170,14 @@ const META: Record<string, ChainMeta> = {
     color: '#7c5cff',
     network: ink,
   },
+  solana: {
+    name: 'Solana',
+    kind: 'solana',
+    domain: SOLANA_CCTP.domain,
+    usdc: SOLANA_CCTP.usdcMint,
+    color: '#9945ff',
+    network: solana,
+  },
 }
 
 function explorerTxUrl(network: AppKitNetwork): (hash: string) => string {
@@ -162,28 +186,44 @@ function explorerTxUrl(network: AppKitNetwork): (hash: string) => string {
 }
 
 export const CHAINS: Record<string, ChainInfo> = Object.fromEntries(
-  Object.entries(META).map(([key, m]) => [
-    key,
-    {
+  Object.entries(META).map(([key, m]) => {
+    const kind = m.kind ?? 'evm'
+    return [
       key,
-      name: m.name,
-      chainId: Number(m.network.id),
-      domain: m.domain,
-      usdc: m.usdc,
-      color: m.color,
-      network: m.network,
-      txUrl: explorerTxUrl(m.network),
-    } satisfies ChainInfo,
-  ]),
+      {
+        key,
+        name: m.name,
+        kind,
+        chainId: kind === 'evm' ? Number(m.network.id) : undefined,
+        domain: m.domain,
+        usdc: m.usdc,
+        color: m.color,
+        network: m.network,
+        txUrl:
+          kind === 'solana'
+            ? (hash: string) => `https://solscan.io/tx/${hash}`
+            : explorerTxUrl(m.network),
+      } satisfies ChainInfo,
+    ]
+  }),
 )
 
 export const CHAIN_LIST: ChainInfo[] = Object.values(CHAINS)
 
-/** 提供给 Reown AppKit / wagmi 的网络列表 */
+/** 提供给 createAppKit 的全部网络（EVM + Solana） */
 export const APPKIT_NETWORKS = CHAIN_LIST.map((c) => c.network) as [
   AppKitNetwork,
   ...AppKitNetwork[],
 ]
+
+/** 仅 EVM 网络（WagmiAdapter 使用） */
+export const EVM_NETWORKS = CHAIN_LIST.filter((c) => c.kind === 'evm').map((c) => c.network) as [
+  AppKitNetwork,
+  ...AppKitNetwork[],
+]
+
+/** Solana 网络（SolanaAdapter / createAppKit 使用） */
+export const SOLANA_NETWORK = solana
 
 export function getChain(key: string): ChainInfo {
   const c = CHAINS[key]

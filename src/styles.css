@@ -403,6 +403,16 @@ body {
   font-weight: 800;
 }
 
+.hint-row {
+  margin: -10px 0 16px;
+  font-size: 12px;
+  color: var(--primary);
+  background: var(--grad-brand-soft);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+}
+
 /* ── 表单字段 ── */
 .field {
   display: block;
@@ -861,6 +871,28 @@ body {
   font-size: 14px;
   margin-top: 14px;
   font-weight: 550;
+}
+
+.reclaim-box {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--glass-2);
+  font-size: 13px;
+}
+.reclaim-info {
+  color: var(--text-2);
+  margin-bottom: 10px;
+}
+.reclaim-box .btn {
+  width: 100%;
+}
+.reclaim-error {
+  margin-top: 8px;
+  color: var(--error);
+  font-size: 12.5px;
+  word-break: break-word;
 }
 
 /* ── 页脚 ── */
