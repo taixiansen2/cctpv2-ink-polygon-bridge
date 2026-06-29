@@ -1,0 +1,32 @@
+{
+  "name": "cctpv2-ink-polygon-bridge",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "用 CCTP v2 (standard / fast) 把 USDC 从 Ink 跨链到 Polygon，扫码连接手机钱包并跟踪订单进度",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@reown/appkit": "1.7.8",
+    "@reown/appkit-adapter-wagmi": "1.7.8",
+    "@tanstack/react-query": "^5.62.7",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "viem": "^2.45.0",
+    "wagmi": "^2.19.5"
+  },
+  "overrides": {
+    "@wagmi/core": "2.22.1",
+    "@wagmi/connectors": "6.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11"
+  }
+}
